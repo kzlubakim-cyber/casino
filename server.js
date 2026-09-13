@@ -233,11 +233,17 @@ app.post(
 
     // === аудио через filter_complex (чтобы применить громкость) ===
     let audioOutLabel = null;
+    
+    
+    
     if (hasAudioFile) {
-      segs.push('[4:a]volume=' + audioVolume + '[aout]');
-      audioOutLabel = '[aout]';
-    }
+  // Смешиваем исходный звук видео + наложенный звук
+  segs.push('[0:a][4:a]amix=inputs=2:duration=first:dropout_transition=0[aout]');
+  audioOutLabel = '[aout]';
+}
 
+
+    
     const filterComplex = segs.join(';');
 
     const args = [

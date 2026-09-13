@@ -25,16 +25,23 @@ const DEFAULT_FONT = 60;
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 // --- перенос строк ---
+// Уважает явные переносы \n из payload (каждый \n -> новая визуальная строка),
+// а внутри каждой строки дополнительно переносит по количеству символов.
 function wrap(text, maxChars) {
-  const words = String(text == null ? '' : text).trim().split(/\s+/);
+  const raw = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+  const paragraphs = raw.split('\n');
   const lines = [];
-  let cur = '';
-  for (const w of words) {
-    if (!cur) { cur = w; continue; }
-    if ((cur + ' ' + w).length <= maxChars) { cur += ' ' + w; }
-    else { lines.push(cur); cur = w; }
+  for (const para of paragraphs) {
+    const words = para.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) { lines.push(''); continue; }
+    let cur = '';
+    for (const w of words) {
+      if (!cur) { cur = w; continue; }
+      if ((cur + ' ' + w).length <= maxChars) { cur += ' ' + w; }
+      else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
   }
-  if (cur) lines.push(cur);
   return lines.length ? lines : [''];
 }
 

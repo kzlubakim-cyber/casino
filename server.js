@@ -68,14 +68,14 @@ function assColor(hex) {
 }
 
 // Разворачивает один блок текста в массив строк Dialogue (по одной на визуальную строку)
-function assDialoguesForBlock({ start, end, textLines, fontsize, colorHex, cy, lineFactor }) {
+function assDialoguesForBlock({ start, end, textLines, fontsize, colorHex, cx, cy, lineFactor }) {
   const lineH = Math.round(fontsize * (lineFactor || 1.28));
   const n = textLines.length;
   const startCy = cy - ((n - 1) * lineH) / 2;
   const col = assColor(colorHex);
   const st = secToAss(start);
   const en = secToAss(end);
-  const x = Math.round(W / 2);
+  const x = Math.round(cx != null ? cx : W / 2);
 
   return textLines.map((ln, i) => {
     const yc = Math.round(startCy + i * lineH);
@@ -132,6 +132,11 @@ app.post(
 
     const duration = Number(payload.duration) || Number((payload.timings || {}).duration) || 15;
 
+    // === громкость аудио (0..1), из payload.audioVolume или payload.volume ===
+    const audioVolume = (typeof payload.audioVolume === 'number') ? payload.audioVolume
+      : (typeof payload.volume === 'number') ? payload.volume
+      : 1.0;
+
     // === стиль и габариты рамки ===
     const style = payload.style || {};
     const box = payload.box || {};
@@ -175,13 +180,25 @@ app.post(
       const fontsize = Number(seg.fontSize) || baseFont;
       const start = Number(seg.start) || 0;
       const end = Number(seg.end != null ? seg.end : duration);
+
+      // горизонталь: seg.x / seg.posX, иначе центр кадра
+      const cx = (seg.x != null) ? Number(seg.x)
+        : (seg.posX != null) ? Number(seg.posX)
+        : Math.round(W / 2);
+
+      // вертикаль: seg.y / seg.posY, иначе старая логика по position
+      const cy = (seg.y != null) ? Math.round(Number(seg.y))
+        : (seg.posY != null) ? Math.round(Number(seg.posY))
+        : cyFor(seg.position);
+
       events.push({
         start,
         end,
         textLines: wrap(seg.text, wrapFor(fontsize)),
         fontsize,
         colorHex: baseHex,
-        cy: cyFor(seg.position),
+        cx,
+        cy,
         lineFactor,
       });
     }
@@ -207,6 +224,13 @@ app.post(
     const assArg = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
     segs.push('[o3]ass=' + assArg + ':fontsdir=' + FONTS_DIR + '[vout]');
 
+    // === аудио через filter_complex (чтобы применить громкость) ===
+    let audioOutLabel = null;
+    if (hasAudioFile) {
+      segs.push('[4:a]volume=' + audioVolume + '[aout]');
+      audioOutLabel = '[aout]';
+    }
+
     const filterComplex = segs.join(';');
 
     const args = [
@@ -224,7 +248,7 @@ app.post(
       '-map', '[vout]',
     );
     if (hasAudioFile) {
-      args.push('-map', '4:a:0');
+      args.push('-map', audioOutLabel);
     } else {
       args.push('-map', '0:a?');
     }

@@ -142,7 +142,7 @@ app.post(
     // === громкость аудио (0..1), из payload.audioVolume или payload.volume ===
     const audioVolume = (typeof payload.audioVolume === 'number') ? payload.audioVolume
       : (typeof payload.volume === 'number') ? payload.volume
-      : 0.5;
+      : 0.1;
 
     // === стиль и габариты рамки ===
     const style = payload.style || {};

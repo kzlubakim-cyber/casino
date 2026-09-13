@@ -20,18 +20,11 @@ const FPS = 30;
 const BROWN = '2E2320';   // hex без # (тёмный)
 const GREEN = '1E7A1E';
 
-const QUESTION_FONT = 34;
-const HOOK_FONT = 34;
-const ANSWER_FONT = 30;
-
-const QUESTION_CY = 529;
-const ANSWER_CY = [785, 890, 999.5];
-const QUESTION_WRAP = 24;
-const ANSWER_WRAP = 22;
+const DEFAULT_FONT = 60;
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-// --- перенос строк (как было) ---
+// --- перенос строк ---
 function wrap(text, maxChars) {
   const words = String(text == null ? '' : text).trim().split(/\s+/);
   const lines = [];
@@ -105,7 +98,7 @@ function buildAss(events) {
     'ScaledBorderAndShadow: yes\n\n' +
     '[V4+ Styles]\n' +
     'Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BorderStyle, Outline, Shadow, Bold, Alignment, MarginL, MarginR, MarginV, Encoding\n' +
-    'Style: Default,' + MAIN_FONT + ',34,' + assColor(BROWN) + ',&H00FFFFFF&,1,3,0,1,5,0,0,0,1\n\n' +
+    'Style: Default,' + MAIN_FONT + ',' + DEFAULT_FONT + ',' + assColor(BROWN) + ',&H00FFFFFF&,1,3,0,1,5,0,0,0,1\n\n' +
     '[Events]\n' +
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
 
@@ -121,11 +114,8 @@ app.post(
   upload.fields([
     { name: 'fon', maxCount: 1 },
     { name: 'topleft', maxCount: 1 },
-    { name: 'inscription', maxCount: 1 },
-    { name: 'animal', maxCount: 1 },
     { name: 'item', maxCount: 1 },
     { name: 'transport', maxCount: 1 },
-    { name: 'niz-pravo', maxCount: 1 },
     { name: 'audio', maxCount: 1 },
   ]),
   (req, res) => {
@@ -134,86 +124,77 @@ app.post(
     catch (e) { return res.status(400).json({ error: 'BAD_PAYLOAD', detail: String(e) }); }
 
     const f = req.files || {};
-    const need = ['fon', 'topleft', 'inscription', 'animal', 'item', 'transport', 'niz-pravo'];
+    const need = ['fon', 'topleft', 'item', 'transport'];
     for (const k of need) {
       if (!f[k] || !f[k][0]) return res.status(400).json({ error: 'MISSING_FILE', field: k });
     }
     const hasAudioFile = !!(f.audio && f.audio[0]);
 
-    const t = payload.timings || {};
-    const duration = Number(payload.duration) || Number(t.duration) || 10;
-    const hookStart = Number(t.hook_start != null ? t.hook_start : 0);
-    const questionStart = Number(t.question_start != null ? t.question_start : 1);
-    const answerStart = Number(t.answer_start != null ? t.answer_start : 4);
-    const answerStep = Number(t.answer_step != null ? t.answer_step : 0.3);
-    const revealStart = Number(t.reveal_start != null ? t.reveal_start : 9);
+    const duration = Number(payload.duration) || Number((payload.timings || {}).duration) || 15;
 
-    const question = payload.question || '';
-    const hook = payload.hook || '';
-    const answers = Array.isArray(payload.answers) ? payload.answers : [];
-    const correctIndex = (Number(payload.correct_answer_position) || 1) - 1;
-
-    // === стиль и габариты из payload ===
+    // === стиль и габариты рамки ===
     const style = payload.style || {};
     const box = payload.box || {};
-    const qFont = Number(style.fontSize) || QUESTION_FONT;
+    const baseFont = Number(style.fontSize) || DEFAULT_FONT;
     const lineFactor = Number(style.lineSpacing) || 1.28;
-    const qHex = style.textColor ? String(style.textColor).replace(/^#/, '') : BROWN;
-    const qCy = (box.y != null && box.height != null)
+    const baseHex = style.textColor ? String(style.textColor).replace(/^#/, '') : BROWN;
+
+    // центр рамки (позиция "middle")
+    const middleCy = (box.y != null && box.height != null)
       ? Math.round(Number(box.y) + Number(box.height) / 2)
-      : QUESTION_CY;
-    const qWrap = (box.width != null)
-      ? Math.max(8, Math.floor(Number(box.width) / (qFont * 0.55)))
-      : QUESTION_WRAP;
+      : Math.round(H / 2);
+    // верх рамки (позиция "top")
+    const topCy = (box.y != null)
+      ? Math.round(Number(box.y) + baseFont * 1.2)
+      : Math.round(H * 0.18);
+
+    const wrapFor = (fontsize) => (box.width != null)
+      ? Math.max(8, Math.floor(Number(box.width) / (fontsize * 0.55)))
+      : 20;
+
+    const cyFor = (position) => (String(position) === 'top' ? topCy : middleCy);
+
+    // === СОБЫТИЯ ДЛЯ .ASS ===
+    const events = [];
+
+    // Предпочитаем массив segments из payload; иначе собираем из timings + полей.
+    let segments = Array.isArray(payload.segments) ? payload.segments : null;
+
+    if (!segments) {
+      const t = payload.timings || {};
+      segments = [
+        { text: payload.hook,      start: t.hook_start,      end: t.hook_end,      position: 'middle' },
+        { text: payload.bet_open,  start: t.bet_open_start,  end: t.bet_open_end,  position: 'middle' },
+        { text: payload.bet_close, start: t.bet_close_start, end: t.bet_close_end, position: 'middle' },
+        { text: payload.support,   start: t.support_start,   end: t.support_end,   position: 'top' },
+      ];
+    }
+
+    for (const seg of segments) {
+      if (!seg || seg.text == null || String(seg.text).trim() === '') continue;
+      const fontsize = Number(seg.fontSize) || baseFont;
+      const start = Number(seg.start) || 0;
+      const end = Number(seg.end != null ? seg.end : duration);
+      events.push({
+        start,
+        end,
+        textLines: wrap(seg.text, wrapFor(fontsize)),
+        fontsize,
+        colorHex: baseHex,
+        cy: cyFor(seg.position),
+        lineFactor,
+      });
+    }
 
     const outPath = path.join(os.tmpdir(), 'out_' + Date.now() + '.mp4');
     const assPath = path.join(os.tmpdir(), 'text_' + Date.now() + '.ass');
 
-    // === слои-оверлеи (как было) ===
+    // === слои-оверлеи: fon -> topleft -> item -> transport ===
     const segs = [];
     segs.push('[0:v]scale=' + W + ':' + H + ',setsar=1,fps=' + FPS + '[b]');
-    segs.push('[b][1:v]overlay=0:0[o1]');
-    segs.push('[o1][2:v]overlay=0:0[o2]');
-    segs.push('[o2][3:v]overlay=0:0[o3]');
-    segs.push('[o3][4:v]overlay=0:0[o4]');
-    segs.push('[o4][5:v]overlay=0:0[o5]');
-    segs.push('[o5][6:v]overlay=0:0[o6]');
-
-    // === СОБИРАЕМ СОБЫТИЯ ДЛЯ .ASS (те же тайминги/позиции, что были в drawtext) ===
-    const events = [];
-
-    if (hook) {
-      events.push({
-        start: hookStart, end: questionStart,
-        textLines: wrap(hook, qWrap),
-        fontsize: qFont, colorHex: qHex, cy: qCy, lineFactor,
-      });
-    }
-
-    if (question) {
-      events.push({
-        start: questionStart, end: duration,
-        textLines: wrap(question, qWrap),
-        fontsize: qFont, colorHex: qHex, cy: qCy, lineFactor,
-      });
-    }
-
-    for (let i = 0; i < 3; i++) {
-      const ans = answers[i];
-      if (ans == null) continue;
-      const appear = answerStart + i * answerStep;
-      const cy = ANSWER_CY[i] != null ? ANSWER_CY[i] : (785 + i * 105);
-      const wrapped = wrap(ans, ANSWER_WRAP);
-
-      if (i === correctIndex) {
-        // до раскрытия — обычный цвет
-        events.push({ start: appear, end: revealStart, textLines: wrapped, fontsize: ANSWER_FONT, colorHex: qHex, cy, lineFactor });
-        // после раскрытия — зелёный
-        events.push({ start: revealStart, end: duration, textLines: wrapped, fontsize: ANSWER_FONT, colorHex: GREEN, cy, lineFactor });
-      } else {
-        events.push({ start: appear, end: revealStart, textLines: wrapped, fontsize: ANSWER_FONT, colorHex: qHex, cy, lineFactor });
-      }
-    }
+    segs.push('[b][1:v]overlay=0:0[o1]');   // topleft
+    segs.push('[o1][2:v]overlay=0:0[o2]');  // item
+    segs.push('[o2][3:v]overlay=0:0[o3]');  // transport
 
     // пишем .ass файл
     try {
@@ -223,31 +204,27 @@ app.post(
     }
 
     // накладываем субтитры (libass) поверх собранной картинки
-    // ВАЖНО: в filter_complex экранируем спецсимволы пути
     const assArg = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-    segs.push('[o6]ass=' + assArg + ':fontsdir=' + FONTS_DIR + '[vout]');
+    segs.push('[o3]ass=' + assArg + ':fontsdir=' + FONTS_DIR + '[vout]');
 
     const filterComplex = segs.join(';');
 
     const args = [
       '-y',
-      '-stream_loop', '-1', '-i', f.fon[0].path,
-      '-loop', '1', '-i', f.topleft[0].path,
-      '-loop', '1', '-i', f.inscription[0].path,
-      '-loop', '1', '-i', f.animal[0].path,
-      '-loop', '1', '-i', f.item[0].path,
-      '-loop', '1', '-i', f.transport[0].path,
-      '-loop', '1', '-i', f['niz-pravo'][0].path,
+      '-stream_loop', '-1', '-i', f.fon[0].path,   // 0
+      '-loop', '1', '-i', f.topleft[0].path,       // 1
+      '-loop', '1', '-i', f.item[0].path,          // 2
+      '-loop', '1', '-i', f.transport[0].path,     // 3
     ];
     if (hasAudioFile) {
-      args.push('-i', f.audio[0].path);
+      args.push('-i', f.audio[0].path);            // 4
     }
     args.push(
       '-filter_complex', filterComplex,
       '-map', '[vout]',
     );
     if (hasAudioFile) {
-      args.push('-map', '7:a:0');
+      args.push('-map', '4:a:0');
     } else {
       args.push('-map', '0:a?');
     }
